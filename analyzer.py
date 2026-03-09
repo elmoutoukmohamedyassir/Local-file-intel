@@ -17,7 +17,7 @@ def calculate_hash(filepath):
     hasher = hashlib.sha256()
     try:
         with open(filepath, 'rb') as f:
-            # Read in 64KB chunks
+            
             while chunk := f.read(65536):
                 hasher.update(chunk)
         return hasher.hexdigest()
@@ -29,19 +29,19 @@ def find_duplicates(files):
     size_map = {}
     duplicates = []
 
-    # Step 1: Group by size (Super fast)
+    
     for f in files:
         size = f['size']
         if size > 0: 
             size_map.setdefault(size, []).append(f)
 
-    # Step 2: Filter out unique sizes (If only 1 file has this size, it's not a dupe)
+   
     candidates = {size: paths for size, paths in size_map.items() if len(paths) > 1}
     
     total_candidates = sum(len(paths) for paths in candidates.values())
     print(f"Found {total_candidates} potential duplicates to verify...")
 
-    # Step 3: Hash only the candidates
+    
     processed_count = 0
     for size, potential_dupes in candidates.items():
         hashes = {}

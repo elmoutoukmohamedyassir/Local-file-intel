@@ -9,14 +9,14 @@ def run_app():
     all_files = get_all_files(target)
     if not all_files: return
 
-    # ... [Keeping previous analysis logic] ...
+    
     ext_data = get_storage_by_extension(all_files)
     top_files = get_top_large_files(all_files, count=5)
     
-    # Simple Report Summary
+    
     print(f"\nScan Complete. {len(all_files)} files found.")
 
-    # Menu System
+    
     while True:
         print("\nWhat would you like to do?")
         print("1. View Storage Report (Top Types & Large Files)")
