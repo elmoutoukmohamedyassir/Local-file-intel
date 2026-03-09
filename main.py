@@ -1,53 +1,51 @@
 from scanner import get_all_files
 from analyzer import get_top_large_files, find_duplicates, get_storage_by_extension
+from organizer import organize_folder
 
 def run_app():
     print("=== Local File Intelligence System ===")
-    target = input("Enter folder path to scan: ").strip()
+    target = input("Enter folder path: ").strip()
     
     all_files = get_all_files(target)
-    if not all_files:
-        print("No files found.")
-        return
+    if not all_files: return
 
-    # 1. Storage by Type
-    print("\n" + "="*30)
-    print("STORAGE BY FILE TYPE")
-    print("="*30)
+    # ... [Keeping previous analysis logic] ...
     ext_data = get_storage_by_extension(all_files)
-    # Sort by size (most used space first)
-    sorted_ext = sorted(ext_data.items(), key=lambda x: x[1], reverse=True)
-    for ext, size in sorted_ext[:10]: # Top 10 types
-        size_mb = round(size / (1024 * 1024), 2)
-        if size_mb > 0:
-            print(f"{ext.upper():<10}: {size_mb} MB")
-
-    # 2. Large Files
-    print("\n" + "="*30)
-    print("TOP 5 LARGEST FILES")
-    print("="*30)
     top_files = get_top_large_files(all_files, count=5)
-    for i, f in enumerate(top_files, 1):
-        size_mb = round(f['size'] / (1024 * 1024), 2)
-        print(f"{i}. {f['name']} | {size_mb} MB")
-
-    # 3. Duplicates
-    print("\n" + "="*30)
-    print("SCANNING FOR DUPLICATES")
-    print("="*30)
-    dupes = find_duplicates(all_files)
     
-    if dupes:
-        print(f"Found {len(dupes)} duplicate pairs.")
-        show_all = input("Show all duplicate paths? (y/n): ")
-        if show_all.lower() == 'y':
-            for original, duplicate in dupes:
-                print(f"\n[!] Duplicate found:\n    O: {original}\n    D: {duplicate}")
-    else:
-        print("No duplicates found.")
+    # Simple Report Summary
+    print(f"\nScan Complete. {len(all_files)} files found.")
 
-    print("\n" + "="*30)
-    print("Analysis Complete!")
+    # Menu System
+    while True:
+        print("\nWhat would you like to do?")
+        print("1. View Storage Report (Top Types & Large Files)")
+        print("2. Find Duplicate Files")
+        print("3. Organize this Folder (Sort by Extension)")
+        print("4. Exit")
+        
+        choice = input("\nSelect an option (1-4): ")
+
+        if choice == '1':
+            print("\nTOP TYPES:")
+            for ext, size in sorted(ext_data.items(), key=lambda x: x[1], reverse=True)[:5]:
+                print(f"{ext.upper()}: {round(size/(1024*1024), 2)} MB")
+        
+        elif choice == '2':
+            dupes = find_duplicates(all_files)
+            print(f"Found {len(dupes)} duplicates.")
+            if dupes and input("Show paths? (y/n): ").lower() == 'y':
+                for o, d in dupes: print(f"D: {d}\nO: {o}\n")
+
+        elif choice == '3':
+            confirm = input("Run a Dry Run first? (y/n): ")
+            is_dry = True if confirm.lower() == 'y' else False
+            organize_folder(target, dry_run=is_dry)
+            if not is_dry:
+                print("Note: Run a new scan to update data after moving files.")
+
+        elif choice == '4':
+            break
 
 if __name__ == "__main__":
     run_app()
