@@ -1,6 +1,6 @@
 from scanner import get_all_files
 from analyzer import get_top_large_files, find_duplicates, get_storage_by_extension, delete_files
-from organizer import organize_folder
+from organizer import organize_folder, get_organize_plan
 
 def run_app():
     print("=== Local File Intelligence System ===")
@@ -11,7 +11,6 @@ def run_app():
         print("No files found. Check the path and try again.")
         return
 
-    
     detected_dupes = []
 
     while True:
@@ -47,7 +46,23 @@ def run_app():
         elif choice == '3':
             confirm = input("Run a Dry Run first? (y/n): ")
             is_dry = True if confirm.lower() == 'y' else False
-            organize_folder(target, dry_run=is_dry)
+            
+            if is_dry:
+                print("\n--- DRY RUN PLAN ---")
+                plan = get_organize_plan(target)
+                if not plan:
+                    print("No loose files found in the root directory to organize.")
+                else:
+                    for file_name, dest_folder in plan:
+                        print(f"Will move: {file_name} -> {dest_folder}/")
+                print("\nDry run complete. No files were actually moved.")
+            else:
+                moved = organize_folder(target, dry_run=False)
+                print(f"\nSuccess! Moved {moved} files.")
+                
+                # Refresh state so our index isn't stale
+                print("Refreshing file index...")
+                all_files = get_all_files(target)
 
         elif choice == '4':
             if not detected_dupes:
@@ -56,12 +71,14 @@ def run_app():
                 print(f" WARNING: You are about to delete {len(detected_dupes)} files.")
                 confirm = input(f"Are you absolutely sure? Type 'DELETE' to confirm: ")
                 if confirm == "DELETE":
-                    
                     paths_to_remove = [pair[1] for pair in detected_dupes]
                     count = delete_files(paths_to_remove)
                     print(f" Successfully removed {count} files.")
                     
                     detected_dupes = []
+                    # Refresh state so our index isn't stale
+                    print("Refreshing file index...")
+                    all_files = get_all_files(target)
                 else:
                     print("Deletion cancelled.")
 

@@ -1,6 +1,6 @@
 import pathlib
 import shutil
-
+import os
 
 EXTENSION_MAP = {
     'Images': ['.jpg', '.jpeg', '.png', '.gif', '.svg', '.bmp'],
@@ -11,39 +11,43 @@ EXTENSION_MAP = {
     'Setup': ['.exe', '.msi']
 }
 
-def organize_folder(target_directory, dry_run=True):
-    """Moves files into categorized folders based on their extensions."""
+def get_organize_plan(target_directory):
     path = pathlib.Path(target_directory)
-    moved_count = 0
-
-    print(f"\n--- {'DRY RUN' if dry_run else 'EXECUTING'} ORGANIZATION ---")
-
+    plan = []
+    if not path.exists(): return []
     
     for file in path.iterdir():
-        if file.is_file():
+        if file.is_file() and not file.name.endswith('.py'):
             ext = file.suffix.lower()
-            dest_folder_name = "Others" 
-
-            
+            dest = "Others"
             for category, extensions in EXTENSION_MAP.items():
                 if ext in extensions:
-                    dest_folder_name = category
+                    dest = category
+                    break
+            plan.append((file.name, dest))
+    return plan
+
+def organize_folder(target_directory, dry_run=True):
+    path = pathlib.Path(target_directory)
+    moved_count = 0
+    if dry_run: return 0
+    
+    for file in path.iterdir():
+        if file.is_file() and not file.name.endswith('.py'):
+            ext = file.suffix.lower()
+            dest_folder = "Others"
+            for category, extensions in EXTENSION_MAP.items():
+                if ext in extensions:
+                    dest_folder = category
                     break
             
+            dest_dir = path / dest_folder
+            dest_dir.mkdir(exist_ok=True)
             
-            dest_dir = path / dest_folder_name
-            dest_path = dest_dir / file.name
-
-            if dry_run:
-                print(f"[WILL MOVE] {file.name} -> {dest_folder_name}/")
-            else:
-                
-                dest_dir.mkdir(exist_ok=True) 
-                try:
-                    shutil.move(str(file), str(dest_path))
-                    print(f"[MOVED] {file.name} -> {dest_folder_name}/")
-                    moved_count += 1
-                except Exception as e:
-                    print(f"[ERROR] Could not move {file.name}: {e}")
-
+            try:
+                # Use string paths for shutil.move to avoid Windows issues
+                shutil.move(str(file), str(dest_dir / file.name))
+                moved_count += 1
+            except:
+                continue
     return moved_count

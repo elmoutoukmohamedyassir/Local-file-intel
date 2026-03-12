@@ -1,82 +1,63 @@
 import hashlib
 import os
-from scanner import get_all_files
 
-def get_top_large_files(files, count=10):
-    """Sorts files by size and returns the top ones."""
-    sorted_list = sorted(files, key=lambda x: x['size'], reverse=True)
-    return sorted_list[:count]
-
-def get_storage_by_extension(files):
-    """Groups storage usage by file type."""
-    summary = {}
-    for f in files:
-        ext = f['ext'] if f['ext'] else "No Extension"
-        summary[ext] = summary.get(ext, 0) + f['size']
-    return summary
-
-def calculate_hash(filepath):
-    """Calculates the SHA-256 hash in chunks to save memory."""
+def calculate_hash(filepath, stop_event=None):
     hasher = hashlib.sha256()
     try:
         with open(filepath, 'rb') as f:
             while chunk := f.read(65536):
+                # CHECK FOR STOP SIGNAL INSIDE THE FILE READ LOOP
+                if stop_event and stop_event.is_set():
+                    return "STOPPED"
                 hasher.update(chunk)
         return hasher.hexdigest()
     except:
         return None
 
-def find_duplicates(files):
-    """Finds duplicates efficiently by only hashing files with matching sizes."""
+def find_duplicates(files, progress_callback=None, stop_event=None):
     size_map = {}
+    for f in files:
+        size_map.setdefault(f['size'], []).append(f)
+
+    candidates = [group for group in size_map.values() if len(group) > 1 and group[0]['size'] > 0]
+    total = sum(len(g) for g in candidates)
+    processed = 0
     duplicates = []
 
-    
-    for f in files:
-        size = f['size']
-        if size > 0: 
-            size_map.setdefault(size, []).append(f)
-
-    
-    candidates = {size: paths for size, paths in size_map.items() if len(paths) > 1}
-    total_candidates = sum(len(paths) for paths in candidates.values())
-    
-    if total_candidates == 0:
-        return []
-
-    print(f"Found {total_candidates} potential duplicates to verify...")
-
-    
-    processed_count = 0
-    for size, potential_dupes in candidates.items():
+    for group in candidates:
         hashes = {}
-        for f in potential_dupes:
-            processed_count += 1
-            print(f"Hashing candidate {processed_count}/{total_candidates}...", end='\r')
+        for f in group:
+            if stop_event and stop_event.is_set(): return duplicates
             
-            file_hash = calculate_hash(f['path'])
-            if file_hash:
-                if file_hash in hashes:
-                    
-                    duplicates.append((hashes[file_hash], f['path']))
+            processed += 1
+            if progress_callback: progress_callback(processed, total, f['name'])
+            
+            h = calculate_hash(f['path'], stop_event)
+            if h == "STOPPED": return duplicates
+            
+            if h:
+                if h in hashes:
+                    duplicates.append((hashes[h], f['path']))
                 else:
-                    hashes[file_hash] = f['path']
-    
-    print(f"\nVerification complete.")
+                    hashes[h] = f['path']
     return duplicates
 
+def get_storage_by_extension(files):
+    summary = {}
+    for f in files:
+        ext = f['ext'] if f['ext'] else "Unknown"
+        summary[ext] = summary.get(ext, 0) + f['size']
+    return summary
+
+def get_top_large_files(files, count=5):
+    return sorted(files, key=lambda x: x['size'], reverse=True)[:count]
+
 def delete_files(file_paths):
-    """
-    Safely deletes a list of file paths.
-    Returns the count of successfully deleted files.
-    """
-    deleted_count = 0
-    for path in file_paths:
+    deleted = 0
+    for p in file_paths:
         try:
-            if os.path.exists(path):
-                os.remove(path)
-                print(f"🗑️ Successfully deleted: {path}")
-                deleted_count += 1
-        except Exception as e:
-            print(f" Error deleting {path}: {e}")
-    return deleted_count
+            if os.path.exists(p):
+                os.remove(p)
+                deleted += 1
+        except: continue
+    return deleted
