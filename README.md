@@ -22,9 +22,4 @@ it's a high-performance file management and storage intelligence application. Bu
 
 ---
 
-📦 Installation & Setup
 
-1. Clone the repository:
-   ```bash
-   git clone [https://github.com/YourUsername/Nexus-Core.git](https://github.com/YourUsername/Nexus-Core.git)
-   cd Nexus-Core
