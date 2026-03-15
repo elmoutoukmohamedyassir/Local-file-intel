@@ -1,230 +1,524 @@
-import flet as ft
+"""
+gui.py  —  Local File Intelligence System
+Compatible with flet >= 0.80
+"""
+import datetime
 import os
 import threading
-import datetime
+
+import flet as ft
+
 from scanner import get_all_files
 from analyzer import find_duplicates, get_storage_by_extension, delete_files, get_top_large_files
 from organizer import organize_folder, get_organize_plan
 
-class NexusApp:
+
+# ── Palette ────────────────────────────────────────────────────────────────────
+BG     = "#0F1115"
+SURF   = "#1A1D24"
+SURF2  = "#252A34"
+BORDER = "#2E3440"
+CYAN   = "#00BCD4"
+GREEN  = "#4CAF50"
+YELLOW = "#FFC107"
+RED    = "#F44336"
+TEXT   = "#ECEFF4"
+DIM    = "#7B8BA0"
+WHITE  = "#FFFFFF"
+
+
+class FileIntelApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.all_files = []
-        self.detected_dupes = []
-        self.target_path = ""
-        # The key to stopping operations instantly
+        self.all_files: list = []
+        self.detected_dupes: list = []
+        self.target_path: str = ""
         self.stop_event = threading.Event()
 
-        # System Theme
-        self.page.title = "Nexus File Intelligence"
-        self.page.theme_mode = ft.ThemeMode.DARK
-        self.page.bgcolor = "#0F1115"
-        self.page.window_width = 1100
-        self.page.window_height = 900
-        self.page.padding = 30
+        # ── Page setup ────────────────────────────────────────────────────────
+        page.title         = "Local File Intelligence System"
+        page.theme_mode    = ft.ThemeMode.DARK
+        page.bgcolor       = BG
+        page.window.width  = 1100
+        page.window.height = 900
+        page.padding       = 30
+        page.scroll        = ft.ScrollMode.ADAPTIVE
 
-        # UI Elements
+        # ── Path input ────────────────────────────────────────────────────────
         self.path_input = ft.TextField(
-            label="SYSTEM PATH", expand=True, border_radius=12,
-            border_color="cyan", focused_border_color="cyan",
-            prefix_icon=ft.Icons.FOLDER_OPEN, text_size=14,
+            label="Enter folder path",
+            expand=True,
+            border_radius=12,
+            border_color=CYAN,
+            focused_border_color=CYAN,
+            prefix_icon=ft.Icons.FOLDER_OPEN,
+            text_size=14,
+            color=TEXT,
+            bgcolor=SURF2,
+            cursor_color=CYAN,
+            label_style=ft.TextStyle(color=DIM),
         )
 
-        self.progress_bar = ft.ProgressBar(width=400, color="cyan", visible=False, bgcolor="#252A34")
-        self.progress_text = ft.Text("", size=12, color="cyan", weight="bold")
-        
-        # New Annuler Button
-        self.stop_btn = ft.ElevatedButton(
-            "ANNULER", icon=ft.Icons.STOP_CIRCLE, color="white", bgcolor="#B22222",
-            visible=False, on_click=self.cancel_task
+        # ── Progress bar (no IconButton — just text cancel) ───────────────────
+        self.progress_bar  = ft.ProgressBar(
+            width=400, color=CYAN, bgcolor=SURF2, visible=False,
+        )
+        self.progress_text = ft.Text("", size=12, color=CYAN, weight=ft.FontWeight.BOLD)
+        self.cancel_btn    = ft.Button(
+            content="STOP",
+            visible=False,
+            on_click=self._cancel,
+            style=ft.ButtonStyle(
+                color=WHITE,
+                bgcolor=RED,
+                shape=ft.RoundedRectangleBorder(radius=8),
+            ),
         )
 
-        self.stat_cards = ft.Row(spacing=15, scroll=ft.ScrollMode.ADAPTIVE)
-        self.top_files_list = ft.Column(spacing=8)
-        
-        # Fixed Scrollable Log View
-        self.log_view = ft.ListView(expand=True, spacing=2, auto_scroll=True)
+        # ── Dashboard (stat cards + top files) ───────────────────────────────
+        self.stat_cards   = ft.Row(spacing=15, wrap=True)
+        self.top_files    = ft.Column(spacing=8)
 
         self.dashboard = ft.Column([
-            ft.Text("STORAGE DISTRIBUTION", size=14, weight="bold", color="cyan"),
+            ft.Text("STORAGE REPORT", size=14, weight=ft.FontWeight.BOLD, color=CYAN),
             self.stat_cards,
-            ft.Divider(height=40, color="transparent"),
-            ft.Text("TOP 5 HEAVY HITTERS", size=14, weight="bold", color="cyan"),
-            self.top_files_list,
             ft.Divider(height=30, color="transparent"),
+            ft.Text("TOP 5 LARGEST FILES", size=14, weight=ft.FontWeight.BOLD, color=CYAN),
+            self.top_files,
+            ft.Divider(height=20, color="transparent"),
         ], visible=False)
 
-        self.setup_ui()
+        # ── Duplicate results ─────────────────────────────────────────────────
+        self.dupe_col     = ft.Column(spacing=6)
+        self.dupe_section = ft.Column([
+            ft.Divider(height=20, color="transparent"),
+            ft.Text("DUPLICATE FILES FOUND", size=14, weight=ft.FontWeight.BOLD, color=YELLOW),
+            ft.Container(height=8),
+            self.dupe_col,
+        ], visible=False)
 
-    def setup_ui(self):
+        # ── Log ───────────────────────────────────────────────────────────────
+        self.log_view = ft.ListView(
+            expand=True, spacing=2, auto_scroll=True,
+        )
+
+        self._build_ui()
+
+    # ── Layout ─────────────────────────────────────────────────────────────────
+    def _build_ui(self):
+        def _btn(label, icon, handler, color=CYAN, bg=SURF2):
+            return ft.Button(
+                content=label,
+                icon=icon,
+                on_click=handler,
+                style=ft.ButtonStyle(
+                    color=color,
+                    bgcolor=bg,
+                    shape=ft.RoundedRectangleBorder(radius=10),
+                ),
+            )
+
         btns = ft.Row([
-            ft.ElevatedButton("SCAN SYSTEM", icon=ft.Icons.SEARCH, on_click=self.start_scan, 
-                              style=ft.ButtonStyle(color="white", bgcolor="#252A34")),
-            ft.ElevatedButton("FIND DUPES", icon=ft.Icons.COPY_ALL, on_click=self.start_dupe,
-                              style=ft.ButtonStyle(color="white", bgcolor="#252A34")),
-            ft.ElevatedButton("ORGANIZE", icon=ft.Icons.AUTO_AWESOME, on_click=self.show_org_menu,
-                              style=ft.ButtonStyle(color="white", bgcolor="#252A34")),
-            ft.ElevatedButton("WIPE DUPES", icon=ft.Icons.DELETE_SWEEP, on_click=self.clean_dupes, 
-                              color="red", style=ft.ButtonStyle(bgcolor="#331111")),
-        ], spacing=15)
+            _btn("SCAN SYSTEM",  ft.Icons.SEARCH,        self._on_scan),
+            _btn("FIND DUPES",   ft.Icons.COPY_ALL,       self._on_dupes),
+            _btn("ORGANIZE",     ft.Icons.AUTO_AWESOME,   self._on_organize,  GREEN,  "#1A2E1A"),
+            _btn("WIPE DUPES",   ft.Icons.DELETE_SWEEP,   self._on_wipe,      RED,    "#2E1A1A"),
+        ], spacing=15, wrap=True)
 
         self.page.add(
+            # Header
             ft.Row([
-                ft.Icon(ft.Icons.SATELLITE_ALT, color="cyan", size=35),
+                ft.Icon(ft.Icons.SATELLITE_ALT, color=CYAN, size=35),
                 ft.Column([
-                    ft.Text("NEXUS CORE", size=28, weight="bold"),
-                    ft.Text("ADVANCED FILE INTELLIGENCE SYSTEM", size=12, color="grey", italic=True),
-                ], spacing=0)
-            ]),
-            ft.Container(height=10),
-            ft.Row([self.path_input]),
+                    ft.Text("LOCAL FILE INTELLIGENCE",
+                            size=26, weight=ft.FontWeight.BOLD, color=WHITE),
+                    ft.Text("Scan · Deduplicate · Organize",
+                            size=11, color=DIM, italic=True),
+                ], spacing=2),
+            ], spacing=12),
+
+            ft.Container(height=16),
+
+            # Path row
+            ft.Row([self.path_input], spacing=0),
+
+            ft.Container(height=12),
+
+            # Action buttons
             btns,
-            ft.Row([self.progress_bar, self.progress_text, self.stop_btn], spacing=15),
-            ft.Divider(color="#252A34", height=40),
+
+            # Progress row
+            ft.Row([
+                self.progress_bar,
+                self.progress_text,
+                self.cancel_btn,
+            ], spacing=15),
+
+            ft.Divider(color=SURF2, height=30),
+
+            # Dashboard (stat cards + top files)
             self.dashboard,
-            ft.Text("ACTIVITY CONSOLE", size=12, color="grey", weight="bold"),
+
+            # Duplicate section
+            self.dupe_section,
+
+            # Log
+            ft.Text("ACTIVITY LOG", size=12, color=DIM, weight=ft.FontWeight.BOLD),
             ft.Container(
-                content=self.log_view, height=250, bgcolor="#16191F",
-                border_radius=15, padding=15, border=ft.Border.all(1, "#252A34")
-            )
+                content=self.log_view,
+                height=250,
+                bgcolor=SURF,
+                border_radius=15,
+                padding=15,
+                border=ft.Border.all(1, BORDER),
+            ),
+            ft.Container(height=20),
         )
 
-    def log(self, msg):
-        now = datetime.datetime.now().strftime('%H:%M:%S')
+    # ── Helpers ────────────────────────────────────────────────────────────────
+    def _log(self, msg, color=DIM):
+        now = datetime.datetime.now().strftime("%H:%M:%S")
         self.log_view.controls.append(
-            ft.Text(f"[{now}] {msg}", size=11, font_family="monospace", color="#A0AEC0")
+            ft.Text(f"[{now}] {msg}", size=11,
+                    font_family="monospace", color=color, selectable=True)
         )
+        if len(self.log_view.controls) > 300:
+            self.log_view.controls.pop(0)
         self.page.update()
 
-    def cancel_task(self, e):
+    def _cancel(self, e):
         self.stop_event.set()
-        self.log("ATTENTION: Manually stopping task. Cleaning up...")
-        self.stop_btn.disabled = True
+        self.cancel_btn.disabled = True
+        self._log("⛔ Abort signal sent…", RED)
+
+    def _busy(self, on: bool, label=""):
+        self.progress_bar.visible  = on
+        self.cancel_btn.visible    = on
+        self.cancel_btn.disabled   = False
+        self.progress_text.value   = label if on else ""
+        if not on:
+            self.progress_bar.value = None
         self.page.update()
 
-    def update_prog(self, curr, total, name):
-        val = curr / total
-        self.progress_bar.value = val
-        # Tracking number added here (e.g. 15/100)
-        self.progress_text.value = f"[{curr}/{total}] Analyzing: {name[:20]}..."
+    def _set_progress(self, curr, total, name):
+        self.progress_bar.value  = curr / total
+        self.progress_text.value = f"[{curr}/{total}] {name[:30]}…"
         self.page.update()
 
-    def start_scan(self, e):
+    # ── SCAN ───────────────────────────────────────────────────────────────────
+    def _on_scan(self, e):
         path = self.path_input.value.strip()
-        if not os.path.isdir(path):
-            self.log("ERROR: Invalid Path.")
+        if not path or not os.path.isdir(path):
+            self._log("ERROR: Invalid path.", RED)
             return
         self.target_path = path
         self.stop_event.clear()
-        threading.Thread(target=self.run_scan, daemon=True).start()
+        self._busy(True, f"Scanning {path}…")
+        threading.Thread(target=self._do_scan, daemon=True).start()
 
-    def run_scan(self):
-        self.progress_bar.visible = True
-        self.log(f"Initiating scan on {self.target_path}")
+    def _do_scan(self):
+        self._log(f"Scanning: {self.target_path}", CYAN)
         self.all_files = get_all_files(self.target_path)
-        
-        # Display Stats
+
+        if self.stop_event.is_set():
+            self._log("Scan cancelled.", RED)
+            self._busy(False)
+            return
+
+        # ── Stat cards: one card per extension ───────────────────────────────
         stats = get_storage_by_extension(self.all_files)
         self.stat_cards.controls.clear()
-        for cat, size in stats.items():
+        for ext, size in sorted(stats.items(), key=lambda x: x[1], reverse=True):
+            label   = ext.upper() if ext else "UNKNOWN"
+            size_mb = round(size / 1_048_576, 2)
+            count   = sum(1 for f in self.all_files if f["ext"] == ext)
             self.stat_cards.controls.append(
                 ft.Container(
                     content=ft.Column([
-                        ft.Text(cat.upper(), size=10, color="cyan", weight="bold"),
-                        ft.Text(f"{round(size/1e6, 2)} MB", size=18, weight="bold")
-                    ], spacing=2),
-                    bgcolor="#1E2229", padding=20, border_radius=15, width=160
+                        ft.Text(label, size=11, color=CYAN,
+                                weight=ft.FontWeight.BOLD),
+                        ft.Text(f"{size_mb} MB", size=18,
+                                weight=ft.FontWeight.BOLD, color=WHITE),
+                        ft.Text(f"{count} file(s)", size=10, color=DIM),
+                    ], spacing=3),
+                    bgcolor=SURF,
+                    padding=ft.padding.all(16),
+                    border_radius=15,
+                    width=150,
+                    border=ft.Border.all(1, BORDER),
                 )
             )
 
-        # Display Top Files
-        top_files = get_top_large_files(self.all_files)
-        self.top_files_list.controls.clear()
-        for f in top_files:
-            self.top_files_list.controls.append(
+        # ── Top 5 largest ────────────────────────────────────────────────────
+        top = get_top_large_files(self.all_files, count=5)
+        self.top_files.controls.clear()
+        max_sz = top[0]["size"] if top else 1
+        for i, f in enumerate(top, 1):
+            mb  = round(f["size"] / 1_048_576, 2)
+            pct = f["size"] / max_sz
+            self.top_files.controls.append(
                 ft.Container(
-                    content=ft.Row([
-                        ft.Icon(ft.Icons.FILE_PRESENT, color="cyan", size=20),
-                        ft.Text(f['name'], expand=True, size=13),
-                        ft.Text(f"{round(f['size']/1e6, 2)} MB", color="cyan")
-                    ]),
-                    bgcolor="#16191F", padding=12, border_radius=10
+                    content=ft.Column([
+                        ft.Row([
+                            ft.Text(f"{i}.", size=12, color=CYAN,
+                                    weight=ft.FontWeight.BOLD, width=24),
+                            ft.Text(f["name"], expand=True, size=13,
+                                    color=TEXT, no_wrap=True,
+                                    overflow=ft.TextOverflow.ELLIPSIS),
+                            ft.Text(f"{mb} MB", color=CYAN, size=12,
+                                    weight=ft.FontWeight.BOLD),
+                        ], spacing=8),
+                        ft.ProgressBar(value=pct, color=CYAN,
+                                       bgcolor=BORDER, height=4),
+                    ], spacing=4),
+                    bgcolor=SURF,
+                    padding=ft.padding.all(14),
+                    border_radius=10,
+                    border=ft.Border.all(1, BORDER),
                 )
             )
 
         self.dashboard.visible = True
-        self.progress_bar.visible = False
-        self.log(f"Scan complete. {len(self.all_files)} files indexed.")
-        self.page.update()
+        self._busy(False)
+        self._log(f"✓ Scan complete — {len(self.all_files)} files indexed.", GREEN)
 
-    def start_dupe(self, e):
-        if not self.all_files: return
-        self.stop_event.clear()
-        self.stop_btn.visible = True
-        self.stop_btn.disabled = False
-        threading.Thread(target=self.run_dupe, daemon=True).start()
-
-    def run_dupe(self):
-        self.progress_bar.visible = True
-        self.log("Hashing candidates...")
-        # Passing stop_event to the backend logic
-        self.detected_dupes = find_duplicates(
-            self.all_files, progress_callback=self.update_prog, stop_event=self.stop_event
-        )
-        
-        if self.stop_event.is_set():
-            self.log("PROCESS ABORTED by user.")
-        else:
-            self.log(f"Finished. {len(self.detected_dupes)} duplicates found.")
-            for o, d in self.detected_dupes:
-                self.log(f"DUPE FOUND: {os.path.basename(d)}")
-
-        self.progress_bar.visible = False
-        self.stop_btn.visible = False
-        self.progress_text.value = ""
-        self.page.update()
-
-    def show_org_menu(self, e):
-        if not self.target_path: return
-        dlg = ft.AlertDialog(
-            title=ft.Text("NEXUS ORGANIZER"),
-            content=ft.Text("Execute migration or Dry Run?"),
-            actions=[
-                ft.TextButton("DRY RUN", on_click=lambda _: self.run_org(True, dlg)),
-                ft.ElevatedButton("EXECUTE", on_click=lambda _: self.run_org(False, dlg), bgcolor="cyan", color="black"),
-            ]
-        )
-        self.page.dialog = dlg
-        dlg.open = True
-        self.page.update()
-
-    def run_org(self, is_dry, dlg):
-        dlg.open = False
-        self.page.update()
-        if is_dry:
-            self.log("--- DRY RUN START ---")
-            plan = get_organize_plan(self.target_path)
-            for name, dest in plan:
-                self.log(f"PLAN: {name} -> [{dest}]")
-            self.log("--- DRY RUN END ---")
-        else:
-            self.log("Starting File Migration...")
-            count = organize_folder(self.target_path, dry_run=False)
-            self.log(f"Migration Complete. {count} files sorted.")
-            self.run_scan() # Refresh dashboard
-
-    def clean_dupes(self, e):
-        if not self.detected_dupes:
-            self.log("Nothing to delete.")
+    # ── FIND DUPES ─────────────────────────────────────────────────────────────
+    def _on_dupes(self, e):
+        if not self.all_files:
+            self._log("Run SCAN SYSTEM first.", YELLOW)
             return
-        self.log(f"Purging {len(self.detected_dupes)} files...")
-        count = delete_files([p[1] for p in self.detected_dupes])
-        self.log(f"Success. {count} files removed.")
-        self.detected_dupes = []
-        self.run_scan()
+        self.stop_event.clear()
+        self.dupe_section.visible = False
+        self.dupe_col.controls.clear()
+        self.page.update()
+        self._busy(True, "Hashing files…")
+        threading.Thread(target=self._do_dupes, daemon=True).start()
 
+    def _do_dupes(self):
+        self._log("Comparing file hashes…", CYAN)
+        self.detected_dupes = find_duplicates(
+            self.all_files,
+            progress_callback=self._set_progress,
+            stop_event=self.stop_event,
+        )
+
+        if self.stop_event.is_set():
+            self._log("Duplicate scan cancelled.", RED)
+            self._busy(False)
+            return
+
+        if not self.detected_dupes:
+            self._log("✓ No duplicates found — folder is clean.", GREEN)
+            self._busy(False)
+            return
+
+        wasted = 0
+        self.dupe_col.controls.clear()
+        for orig, dupe in self.detected_dupes:
+            try:
+                sz = os.path.getsize(dupe)
+            except Exception:
+                sz = 0
+            wasted += sz
+            self.dupe_col.controls.append(
+                ft.Container(
+                    content=ft.Column([
+                        ft.Row([
+                            ft.Container(
+                                content=ft.Text("ORIGINAL", size=10,
+                                                color=GREEN,
+                                                weight=ft.FontWeight.BOLD),
+                                bgcolor="#1A2E1A", border_radius=6,
+                                padding=ft.padding.symmetric(horizontal=8, vertical=3),
+                            ),
+                            ft.Text(orig, size=11, color=DIM, expand=True,
+                                    selectable=True, no_wrap=True,
+                                    overflow=ft.TextOverflow.ELLIPSIS),
+                        ], spacing=8),
+                        ft.Row([
+                            ft.Container(
+                                content=ft.Text("DUPLICATE", size=10,
+                                                color=RED,
+                                                weight=ft.FontWeight.BOLD),
+                                bgcolor="#2E1A1A", border_radius=6,
+                                padding=ft.padding.symmetric(horizontal=8, vertical=3),
+                            ),
+                            ft.Text(dupe, size=11, color=TEXT, expand=True,
+                                    selectable=True, no_wrap=True,
+                                    overflow=ft.TextOverflow.ELLIPSIS),
+                            ft.Text(f"{round(sz/1_048_576, 2)} MB",
+                                    size=11, color=RED, width=70),
+                        ], spacing=8),
+                    ], spacing=6),
+                    bgcolor=SURF, padding=ft.padding.all(12),
+                    border_radius=10, border=ft.Border.all(1, BORDER),
+                )
+            )
+
+        self._log(
+            f"⚠ {len(self.detected_dupes)} pair(s) — "
+            f"{round(wasted/1_048_576, 2)} MB wasted.", YELLOW,
+        )
+        self.dupe_section.visible = True
+        self._busy(False)
+
+    # ── ORGANIZE ───────────────────────────────────────────────────────────────
+    def _on_organize(self, e):
+        if not self.target_path:
+            self._log("Run SCAN SYSTEM first.", YELLOW)
+            return
+        plan = get_organize_plan(self.target_path)
+        if not plan:
+            self._log("No loose files to organize.", DIM)
+            return
+
+        # Group by destination
+        groups: dict = {}
+        for fname, dest in plan:
+            groups.setdefault(dest, []).append(fname)
+
+        # Build preview rows
+        preview_rows = []
+        for dest, files in sorted(groups.items()):
+            preview_rows.append(
+                ft.Container(
+                    content=ft.Column([
+                        ft.Row([
+                            ft.Icon(ft.Icons.FOLDER, color=CYAN, size=16),
+                            ft.Text(f"{dest}/", size=12, color=CYAN,
+                                    weight=ft.FontWeight.BOLD),
+                            ft.Container(
+                                content=ft.Text(f"{len(files)} files", size=10,
+                                                color=CYAN, weight=ft.FontWeight.BOLD),
+                                bgcolor=SURF2, border_radius=6,
+                                padding=ft.padding.symmetric(horizontal=8, vertical=3),
+                            ),
+                        ], spacing=8),
+                        ft.Column([
+                            ft.Row([
+                                ft.Icon(ft.Icons.ARROW_RIGHT, color=DIM, size=14),
+                                ft.Text(fn, size=11, color=DIM, expand=True,
+                                        no_wrap=True,
+                                        overflow=ft.TextOverflow.ELLIPSIS),
+                            ], spacing=4)
+                            for fn in files[:10]
+                        ] + ([ft.Text(f"  …and {len(files)-10} more",
+                                      size=10, color=DIM, italic=True)]
+                             if len(files) > 10 else []),
+                        spacing=2),
+                    ], spacing=6),
+                    bgcolor=SURF2, border_radius=10, padding=ft.padding.all(12),
+                    border=ft.Border.all(1, BORDER),
+                    margin=ft.Margin(0, 0, 0, 8),
+                )
+            )
+
+        def do_run(_):
+            page.pop_dialog()
+            self._busy(True, "Organizing files…")
+            threading.Thread(target=self._do_organize, daemon=True).start()
+
+        page = self.page
+        dlg = ft.AlertDialog(
+            modal=True, bgcolor=SURF,
+            title=ft.Text("ORGANIZE PREVIEW",
+                          weight=ft.FontWeight.BOLD, color=WHITE, size=16),
+            content=ft.Column([
+                ft.Text(f"{len(plan)} file(s) will be moved into sub-folders:",
+                        size=12, color=DIM),
+                ft.Container(height=8),
+                ft.Container(
+                    content=ft.Column(preview_rows,
+                                      scroll=ft.ScrollMode.ADAPTIVE, spacing=0),
+                    height=340, bgcolor=BG,
+                    border_radius=10, padding=ft.padding.all(10),
+                    border=ft.Border.all(1, BORDER),
+                ),
+            ], tight=True, width=540),
+            actions=[
+                ft.Button(
+                    content="CANCEL",
+                    on_click=lambda _: page.pop_dialog(),
+                    style=ft.ButtonStyle(
+                        color=DIM, bgcolor=SURF2,
+                        shape=ft.RoundedRectangleBorder(radius=8),
+                    ),
+                ),
+                ft.Button(
+                    content="RUN — MOVE FILES",
+                    icon=ft.Icons.PLAY_ARROW,
+                    on_click=do_run,
+                    style=ft.ButtonStyle(
+                        color=WHITE, bgcolor=GREEN,
+                        shape=ft.RoundedRectangleBorder(radius=8),
+                    ),
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        self.page.show_dialog(dlg)
+
+    def _do_organize(self):
+        self._log("Moving files into sub-folders…", CYAN)
+        count = organize_folder(self.target_path, dry_run=False)
+        self._log(f"✓ Done — {count} file(s) moved.", GREEN)
+        self._log("Refreshing index…", DIM)
+        self._do_scan()
+
+    # ── WIPE DUPES ─────────────────────────────────────────────────────────────
+    def _on_wipe(self, e):
+        if not self.detected_dupes:
+            self._log("No duplicates queued — run FIND DUPES first.", YELLOW)
+            return
+
+        n    = len(self.detected_dupes)
+        page = self.page
+
+        def confirm(_):
+            page.pop_dialog()
+            deleted = delete_files([p[1] for p in self.detected_dupes])
+            self.detected_dupes = []
+            self.dupe_col.controls.clear()
+            self.dupe_section.visible = False
+            self._log(f"✕ {deleted} file(s) permanently deleted.", RED)
+            threading.Thread(target=self._do_scan, daemon=True).start()
+
+        dlg = ft.AlertDialog(
+            modal=True, bgcolor=SURF,
+            title=ft.Text("CONFIRM DELETION",
+                          weight=ft.FontWeight.BOLD, color=RED, size=15),
+            content=ft.Text(
+                f"You are about to permanently delete {n} duplicate file(s).\n"
+                "This action CANNOT be undone.",
+                size=13, color=TEXT,
+            ),
+            actions=[
+                ft.Button(
+                    content="CANCEL",
+                    on_click=lambda _: page.pop_dialog(),
+                    style=ft.ButtonStyle(
+                        color=DIM, bgcolor=SURF2,
+                        shape=ft.RoundedRectangleBorder(radius=8),
+                    ),
+                ),
+                ft.Button(
+                    content=f"DELETE {n} FILES",
+                    icon=ft.Icons.DELETE_FOREVER,
+                    on_click=confirm,
+                    style=ft.ButtonStyle(
+                        color=WHITE, bgcolor=RED,
+                        shape=ft.RoundedRectangleBorder(radius=8),
+                    ),
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        self.page.show_dialog(dlg)
+
+
+# ── Entry ──────────────────────────────────────────────────────────────────────
 def main(page: ft.Page):
-    NexusApp(page)
+    FileIntelApp(page)
 
-if __name__ == "__main__":
-    ft.app(target=main)
+
+ft.run(main)
